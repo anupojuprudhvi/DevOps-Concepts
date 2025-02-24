@@ -113,8 +113,7 @@ Want to **contribute**? We'd love to have you!
 ## ❤️ **Support & Connect**
 ⭐ **Star this repo** if you find it useful!  
 💬 **Reach out for discussions, feedback & collabs!**  
-🐦 Twitter: [@yourhandle](https://twitter.com/yourhandle)  
-📧 Email: your.email@example.com  
+📧 Email: anupojuprudhvi@gmail.com
 
 ---
 
