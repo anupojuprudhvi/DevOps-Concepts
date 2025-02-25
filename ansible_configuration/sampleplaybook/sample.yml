@@ -1,0 +1,21 @@
+---
+- name: Manage test text file in /tmp
+  hosts: all
+  become: yes  # Run tasks as root
+  vars:
+    file_state: file
+  tasks:
+    - name: Manage test.txt file
+      ansible.builtin.copy:
+        content: "This is a test file created by Ansible\nTesting 1-2-3\n"
+        dest: /tmp/test.txt
+        mode: '0644'
+        owner: root
+        group: root
+      when: file_state == 'file'
+
+    - name: Remove test.txt file
+      ansible.builtin.file:
+        path: /tmp/test.txt
+        state: absent
+      when: file_state == 'absent'
