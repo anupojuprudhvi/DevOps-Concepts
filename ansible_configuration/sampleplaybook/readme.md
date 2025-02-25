@@ -49,12 +49,15 @@ Here’s the magic in action:
 ### Quick Setup
 1. Grab this playbook (`sample.yml`).
 2. Set up your inventory:
-   ```ini
-   [all]
-   10.26.29.17
-   10.26.29.207
-   10.26.30.113
-   ```
+    ```ini
+    [appserver]
+    192.168.1.10
+    192.168.1.11
+
+    [dmz]
+    192.168.1.20
+    192.168.1.21
+    ```
 
 ---
 
