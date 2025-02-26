@@ -26,6 +26,7 @@ resource "aws_instance" "example" {
   instance_type          = var.instance_type
   key_name               = var.key_pair_name
   vpc_security_group_ids = [aws_security_group.allow_ssh.id]
+  subnet_id              = var.subnet_id # Use the subnet_id variable here
 
   tags = merge(var.default_tags, { Name = "example-instance" })
 }
