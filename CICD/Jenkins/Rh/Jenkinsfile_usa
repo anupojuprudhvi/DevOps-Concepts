@@ -1,0 +1,130 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(defaultValue: "pccportal", description: 'name of the ECR repo', name: 'Microservice_ECR_repo')
+        string(defaultValue: "prod", description: 'environment, without specifying an environment number', name: 'Environ')
+        booleanParam(name: 'Deploy', defaultValue: false, description: 'Run Deploy stage or not')
+     }
+
+    environment {
+        Envir = "${params.Environ}"
+        GitTagPrefix = ""
+        GitAndImageTag = ""
+    }
+
+    stages {
+        stage('prod?') {
+            when {
+                anyOf {
+                    changeRequest target: 'master'
+                    branch 'prod'
+                }
+            }
+            steps {
+                script {
+                    Envir = "prod"
+                    GitTagPrefix = "prod"
+                    GitAndImageTag = "${GitTagPrefix}1.0.${BUILD_NUMBER}"
+                }
+            }
+        }
+
+        stage('Build image') {
+            when { // Run the image build when this is a PUSH to develop, prod, master
+                anyOf {
+                   branch 'prod'
+                }
+            }
+            steps {
+                sh """
+                  echo "Building versioning per tag:  ${GitAndImageTag} .."
+                  docker build -t 991433499337.dkr.ecr.us-east-1.amazonaws.com/pccportal:${GitAndImageTag} .
+                """
+            }
+        }
+
+        stage('Get secret files, enter VPN') {
+            when { // enter VPN when this is a PUSH to develop, prod, master
+                anyOf {
+                    branch 'prod'
+                }
+            }
+            steps {
+                sh """
+                   echo "downloading environment files from remote . . ."
+                   sudo aws s3 cp s3://razielcicd/ . --recursive #requires a previous aws config in root (sudo) /root/.aws folder  
+                   
+                   echo "kill previous VPN connections . . ."
+                   sudo killall openvpn ||true
+                   
+                   #echo "connect to VPN . . ."
+                   #cd ${Envir}1/ #Required if the opvn file doesnt contain the crt and key files
+                   #sudo openvpn --config ${Envir}1.ovpn --daemon 
+                   #cd - #Going back to previous folder
+				"""
+            }
+        }
+
+        stage('Upload image to ECR') {
+            when { // Upload image when this is a PUSH to develop, prod, master
+                anyOf {
+                    branch 'prod'
+                }
+            }
+            steps {
+                sh """
+                   echo "authenticate to container repo . . ."
+                 sudo aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 991433499337.dkr.ecr.us-east-1.amazonaws.com #configure temp docker creds by use of aws creds of sudo (in /root/.aws/)
+                   
+                   echo "push!"
+                   docker push 991433499337.dkr.ecr.us-east-1.amazonaws.com/pccportal:${GitAndImageTag}
+				"""
+            }
+        }
+
+    stage('Deploy') {
+            when { // Deploy service to k8s when this is a PUSH to develop, prod, master, or when Deploy param is set to true
+                anyOf {
+                    branch 'prod'
+                    // expression { params.Deploy == true }
+                }
+            }
+            steps {
+                git branch: 'prod',
+                        credentialsId: 'razdevops',
+                        url: 'https://razdevops:EKCg4NRkMsXv58Cqbg7B@bitbucket.org/razcode/razielhealth.app-deployments.git'
+                script {
+                    Microservice_ECR_repo_Minus = params.Microservice_ECR_repo.replace(".", "-") //replacing the damned . with a - which is required by kubernetes service/deployment naming convention
+                }
+                withAWS(credentials: 'MatrixUser', region: 'us-east-1') {
+
+                    sh """
+                       sleep 5 #To wait for the VPN to load
+                       ip a #to see VPN ip
+    
+                       #git clone https://razdevops:EKCg4NRkMsXv58Cqbg7B@bitbucket.org/razcode/razielhealth.app-deployments.git
+                       #cp razielhealth.app-deployments/* -R .
+                       #sudo rm -rf razielhealth.app-deployments/
+                       #sudo chmod -R 777 ${Envir}1
+                       #export KUBECONFIG=\$(ls ${Envir}1/k8s-*) #Authenticate to kubernetes, e.g k8s-dev1 that was downloaded from remote
+                       export PATH=$PATH:/usr/local/bin/ #required to use kubectl in deploy.sh
+                       
+                       echo "switch to namespace ${Envir}  . . ." #the context and namespace should be created by https://bitbucket.org/matrix-raziel/razielhealth.k8s.infra/src/master/ali-k8s-infra.sh 
+                       #kubectl config use-context ${Envir}
+			           kubectl config set-context --current --namespace=${Envir}
+
+                       echo "adding pod secrets . . ."
+                       kubectl delete secret shenzhenregistry || true
+                       kubectl create secret generic shenzhenregistry --from-file=.dockerconfigjson=/var/lib/jenkins/.docker/config.json --type=kubernetes.io/dockerconfigjson || true #sets docker login in the current k8s context, for the k8s nodes to get images from the private registry. This becomes invalid every 7 days so the previous command deletes it
+                       
+                       ls -l *.yaml #Base64 encoded passwords and paths
+                        ./raziel-deploy.sh ${Envir} ${Microservice_ECR_repo_Minus} ${GitAndImageTag}
+                       
+                    """
+                }
+            }
+        }
+    
+    } //end of stages
+} //end of pipeline

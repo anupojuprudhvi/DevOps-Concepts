@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: caremanagement
+  namespace: qa
+  labels:
+    run: caremanagement-svc
+spec:
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  selector:
+    app: caremanagement-svc
+  type: ClusterIP #communicates with in the cluster
+

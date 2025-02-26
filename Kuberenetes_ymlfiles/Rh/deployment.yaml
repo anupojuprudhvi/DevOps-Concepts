@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caremanagement
+  namespace: qa
+  labels:
+    app: caremanagement-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: caremanagement-app
+  template:
+    metadata:
+      labels:
+        app: caremanagement-app
+    spec:
+      containers:
+        - name: caremanagement-app
+          image: 991433499337.dkr.ecr.us-east-1.amazonaws.com/caremanagement2.0:qa1.0.1
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          imagePullPolicy: Always
+-----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caremanagement
+  namespace: qa
+  labels:
+    app: caremanagement-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: caremanagement-app
+  template:
+    metadata:
+      labels:
+        app: caremanagement-app
+    spec:
+      containers:
+        - name: caremanagement-app
+          image: 991433499337.dkr.ecr.us-east-1.amazonaws.com/caremanagement2.0:qa1.0.1
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
