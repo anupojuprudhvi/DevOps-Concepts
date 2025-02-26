@@ -1,7 +1,7 @@
 
 ---
 
-# 🚀 SRTA: Understanding Kubernetes Resource Allocation and Autoscaling Behavior
+# 🚀  Understanding Kubernetes Resource Allocation and Autoscaling Behavior
 
 Welcome to the ultimate guide on Kubernetes resource allocation and autoscaling! 🌟 This document explains how Kubernetes handles resource requests, limits, and autoscaling—and offers actionable insights to optimize your cluster for efficiency and cost savings.
 
