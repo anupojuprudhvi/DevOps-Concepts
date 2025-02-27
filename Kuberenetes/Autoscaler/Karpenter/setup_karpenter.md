@@ -1,121 +1,124 @@
-Deploying **Karpenter** on an **Amazon EKS (Elastic Kubernetes Service)** cluster involves several steps. Below is a detailed guide to help you set up Karpenter and integrate it with your EKS cluster.
 
 ---
 
-### **Prerequisites**
-
-Before deploying Karpenter, ensure you have the following:
-
-1. **AWS CLI Installed**:
-   - Install and configure the AWS CLI: [AWS CLI Installation Guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html).
-
-2. **kubectl Installed**:
-   - Install `kubectl`: [kubectl Installation Guide](https://kubernetes.io/docs/tasks/tools/).
-
-3. **eksctl Installed**:
-   - Install `eksctl` for managing EKS clusters: [eksctl Installation Guide](https://eksctl.io/).
-
-4. **IAM Permissions**:
-   - Ensure your AWS user or role has permissions for EKS, EC2, IAM, and CloudFormation.
-
-5. **EKS Cluster**:
-   - You need an existing EKS cluster or create one using `eksctl`.
-
-6. **Helm Installed** (Optional):
-   - If you plan to use Helm for Karpenter deployment, install Helm: [Helm Installation Guide](https://helm.sh/docs/intro/install/).
+## **🚀 Steps to Deploy Karpenter with an EKS Cluster**
+This guide will cover **everything needed** to deploy **Karpenter with a new EKS cluster**, ensuring it's fully operational.
 
 ---
 
-### **Step 1: Create an EKS Cluster**
+### **1️⃣ Deploy an EKS Cluster**
+- Create an **EKS cluster without a Managed Node Group**.
+- Enable **OIDC** to allow Karpenter to assume IAM roles.
+- Ensure **VPC and Subnets** are correctly set up.
 
-If you don’t already have an EKS cluster, you can create one using `eksctl`. Here’s an example command:
+✔ **Required Outputs:**
+  - `EKS Cluster Name`
+  - `OIDC Provider URL`
+  - `VPC & Subnet IDs`
 
-```bash
+#### **🔹 Create an EKS Cluster with `eksctl`**
+```sh
 eksctl create cluster \
   --name my-eks-cluster \
   --region us-west-2 \
   --version 1.27 \
-  --nodegroup-name standard-workers \
-  --node-type t3.medium \
-  --nodes 2 \
-  --nodes-min 1 \
-  --nodes-max 3
+  --without-nodegroup \
+  --vpc-nat-mode Disable
 ```
 
-This creates an EKS cluster with a managed node group of `t3.medium` instances.
-
----
-
-### **Step 2: Set Up IAM Roles for Karpenter**
-
-Karpenter requires an IAM role to interact with AWS services like EC2. Follow these steps to create the necessary IAM resources:
-
-#### **a. Create an IAM Role for Karpenter**
-Run the following commands to create an IAM role and attach the required policies:
-
-```bash
-export CLUSTER_NAME=my-eks-cluster
-export AWS_REGION=us-west-2
-
-# Create the IAM role
-eksctl create iamserviceaccount \
-  --cluster $CLUSTER_NAME \
-  --namespace karpenter \
-  --name karpenter \
-  --attach-policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess \
-  --attach-policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess \
-  --attach-policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore \
+#### **🔹 Enable OIDC**
+```sh
+eksctl utils associate-iam-oidc-provider \
+  --cluster my-eks-cluster \
   --approve
 ```
 
-This creates a service account named `karpenter` in the `karpenter` namespace with the required permissions.
+---
+
+### **2️⃣ Set Up IAM Roles for Karpenter**
+- Karpenter needs IAM permissions to **provision EC2 instances** and manage scaling.
+
+✔ **Required Outputs:**
+  - `IAM Role ARN for Karpenter`
+
+#### **🔹 Create IAM Role for Karpenter**
+1️⃣ First, **fetch your OIDC provider URL**:
+```sh
+aws eks describe-cluster --name my-eks-cluster --query "cluster.identity.oidc.issuer" --output text
+```
+2️⃣ Create an **IAM trust policy** (`karpenter-trust-policy.json`):
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/<OIDC_PROVIDER_URL>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "<OIDC_PROVIDER_URL>:sub": "system:serviceaccount:karpenter:karpenter"
+        }
+      }
+    }
+  ]
+}
+```
+3️⃣ Create the **IAM role**:
+```sh
+aws iam create-role --role-name KarpenterControllerRole --assume-role-policy-document file://karpenter-trust-policy.json
+```
+4️⃣ Attach the required AWS-managed policies:
+```sh
+aws iam attach-role-policy --role-name KarpenterControllerRole --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+aws iam attach-role-policy --role-name KarpenterControllerRole --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+aws iam attach-role-policy --role-name KarpenterControllerRole --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+```
 
 ---
 
-### **Step 3: Deploy Karpenter**
+### **3️⃣ Install Karpenter on EKS**
+- Deploy Karpenter using **Helm**.
+- Create a **ServiceAccount** linked to the IAM role.
 
-You can deploy Karpenter using either **Helm** or **kubectl**. Below are both methods:
+✔ **Required Outputs:**
+  - `Karpenter Namespace`
+  - `ServiceAccount`
 
-#### **Option 1: Deploy Karpenter Using Helm**
+#### **🔹 Create a Namespace & Service Account**
+```sh
+kubectl create namespace karpenter
+kubectl create serviceaccount karpenter -n karpenter
+kubectl annotate serviceaccount karpenter -n karpenter eks.amazonaws.com/role-arn=arn:aws:iam::<AWS_ACCOUNT_ID>:role/KarpenterControllerRole
+```
 
-1. Add the Karpenter Helm repository:
-   ```bash
-   helm repo add karpenter https://charts.karpenter.sh
-   helm repo update
-   ```
+#### **🔹 Install Karpenter using Helm**
+```sh
+helm repo add karpenter https://charts.karpenter.sh
+helm repo update
 
-2. Install Karpenter:
-   ```bash
-   helm install karpenter karpenter/karpenter \
-     --namespace karpenter \
-     --create-namespace \
-     --set serviceAccount.create=false \
-     --set clusterName=$CLUSTER_NAME \
-     --set clusterEndpoint=$(aws eks describe-cluster --name $CLUSTER_NAME --query "cluster.endpoint" --output text) \
-     --set aws.defaultInstanceProfile=KarpenterNodeInstanceProfile-$CLUSTER_NAME \
-     --version v0.31.0
-   ```
-
-#### **Option 2: Deploy Karpenter Using kubectl**
-
-1. Download the Karpenter manifests:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/aws/karpenter/main/website/content/en/preview/getting-started/getting-started-with-karpenter.yaml > karpenter.yaml
-   ```
-
-2. Apply the manifests:
-   ```bash
-   kubectl apply -f karpenter.yaml
-   ```
+helm install karpenter karpenter/karpenter \
+  --namespace karpenter \
+  --create-namespace \
+  --set serviceAccount.create=false \
+  --set clusterName=my-eks-cluster \
+  --set clusterEndpoint=$(aws eks describe-cluster --name my-eks-cluster --query "cluster.endpoint" --output text) \
+  --set aws.defaultInstanceProfile=KarpenterNodeInstanceProfile-my-eks-cluster \
+  --version v0.31.0
+```
 
 ---
 
-### **Step 4: Configure a Provisioner**
+### **4️⃣ Create a Karpenter Provisioner**
+- This defines how **Karpenter provisions nodes**.
+- Supports **instance types, Spot instances, and scaling settings**.
 
-A **Provisioner** defines how Karpenter should provision nodes. Create a `Provisioner` resource to specify instance types, capacity types (e.g., Spot or On-Demand), and other constraints.
+✔ **Required Outputs:**
+  - `Provisioner applied successfully`
 
-Here’s an example `Provisioner` configuration:
-
+#### **🔹 Create a `provisioner.yaml` file**
 ```yaml
 apiVersion: karpenter.sh/v1alpha5
 kind: Provisioner
@@ -135,92 +138,82 @@ spec:
   ttlSecondsAfterEmpty: 30
   provider:
     subnetSelector:
-      karpenter.sh/discovery: ${CLUSTER_NAME}
+      karpenter.sh/discovery: my-eks-cluster
     securityGroupSelector:
-      karpenter.sh/discovery: ${CLUSTER_NAME}
+      karpenter.sh/discovery: my-eks-cluster
 ```
 
-Apply the provisioner:
-
-```bash
+#### **🔹 Apply the provisioner**
+```sh
 kubectl apply -f provisioner.yaml
 ```
 
 ---
 
-### **Step 5: Test Karpenter**
+### **5️⃣ Verify Karpenter is Working**
+- Deploy a test workload and **ensure Karpenter provisions a node**.
+- Check if **new nodes scale up and down dynamically**.
 
-To test Karpenter, deploy a workload that requires additional resources. For example:
+✔ **Required Outputs:**
+  - `New node created by Karpenter`
+  - `Autoscaling works as expected`
 
-1. Create a deployment with high resource requests:
-   ```yaml
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inflate
-   spec:
-     replicas: 0
-     selector:
-       matchLabels:
-         app: inflate
-     template:
-       metadata:
-         labels:
-           app: inflate
-       spec:
-         containers:
-         - name: inflate
-           image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
-           resources:
-             requests:
-               cpu: "1"
-               memory: 2Gi
-   ```
-
-2. Scale the deployment:
-   ```bash
-   kubectl scale deployment inflate --replicas=5
-   ```
-
-3. Observe Karpenter provisioning new nodes:
-   ```bash
-   kubectl get nodes -w
-   ```
-
-Karpenter will automatically provision nodes to meet the resource demands of the `inflate` pods.
-
----
-
-### **Step 6: Monitor and Optimize**
-
-1. **Monitor Costs**:
-   - Use AWS Cost Explorer to monitor EC2 costs and optimize Spot Instance usage.
-
-2. **Monitor Logs**:
-   - Check Karpenter logs for debugging:
-     ```bash
-     kubectl logs -n karpenter $(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o name)
-     ```
-
-3. **Tune Provisioner Settings**:
-   - Adjust the `ttlSecondsAfterEmpty` value to control how quickly idle nodes are terminated.
-   - Experiment with Spot Instances and Graviton processors for cost savings.
+#### **🔹 Deploy a test workload**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: inflate
+  template:
+    metadata:
+      labels:
+        app: inflate
+    spec:
+      containers:
+      - name: inflate
+        image: public.ecr.aws/eks-distro/kubernetes/pause:3.7
+        resources:
+          requests:
+            cpu: "1"
+            memory: 2Gi
+```
+Apply it:
+```sh
+kubectl apply -f inflate.yaml
+kubectl scale deployment inflate --replicas=5
+```
+Check if Karpenter provisions new nodes:
+```sh
+kubectl get nodes -w
+```
 
 ---
 
-### **Step 7: Clean Up**
-
-To avoid unnecessary charges, clean up your resources after testing:
-
-1. Delete the EKS cluster:
-   ```bash
-   eksctl delete cluster --name $CLUSTER_NAME
-   ```
-
-2. Delete IAM roles and policies created for Karpenter.
+## **📌 Summary: What Needs to Be Done?**
+✅ **Step 1:** Deploy **EKS Cluster**  
+✅ **Step 2:** Set up **IAM Roles & Policies**  
+✅ **Step 3:** Install **Karpenter using Helm**  
+✅ **Step 4:** Configure **Provisioner** for auto-scaling  
+✅ **Step 5:** **Test and Verify** Karpenter is working  
 
 ---
 
-### **Conclusion**
+## **🔥 Additional Considerations**
+### **1️⃣ Do You Need a Managed Node Group?**
+- **No, Karpenter can handle all node provisioning dynamically**.
+- However, EKS requires some capacity for **CoreDNS** and system components.
+- **Options**:
+  - **Option 1:** Use **a small Managed Node Group** (1-2 instances).
+  - **Option 2:** Use **Fargate** for system components.
+  - **Option 3:** Let **Karpenter bootstrap itself** (advanced).
 
-By following these steps, you can successfully deploy Karpenter on an Amazon EKS cluster and take advantage of its fast scaling, cost optimization, and simplified node management capabilities. Karpenter is particularly well-suited for dynamic workloads and environments where cost efficiency is critical.
+### **2️⃣ Using Spot Instances?**
+- Karpenter **fully supports Spot Instances**.
+- Modify the provisioner YAML to **prioritize Spot Instances**.
+
+---
